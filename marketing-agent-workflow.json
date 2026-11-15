@@ -1,0 +1,1171 @@
+{
+  "name": "Marketing AI Agent - Recovery Loop",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        0
+      ],
+      "id": "ebc30f56-ad8e-446f-9b7c-5fa595bb6d17",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst aiItems = $input.all();\nconst codeItems = $('Validate Rules 1-3').all();\n\nif (aiItems.length !== codeItems.length) {\n  throw new Error(\n    `Item count mismatch: AI=${aiItems.length}, Code=${codeItems.length}`\n  );\n}\n\nconst reports = [];\n\nfor (let i = 0; i < aiItems.length; i++) {\n  const source = codeItems[i].json;\n  const codeData = source.code_results;\n  const raw = aiItems[i].json;\n\n  let aiData = raw.output ?? raw.text ?? raw;\n\n  if (typeof aiData === 'string') {\n    const cleaned = aiData\n      .replace(/^```(?:json)?\\s*/i, '')\n      .replace(/\\s*```$/, '')\n      .trim();\n\n    aiData = JSON.parse(cleaned);\n  }\n\n  const results = {\n    rule1: codeData.rule1,\n    rule2: codeData.rule2,\n    rule3: codeData.rule3,\n    rule4: aiData.rule4,\n    rule5: aiData.rule5\n  };\n\n  for (const [rule, value] of Object.entries(results)) {\n    if (!['PASS', 'FAIL'].includes(value)) {\n      throw new Error(\n        `${source.test_case}: Invalid result for ${rule}: ${value}`\n      );\n    }\n  }\n\n  const overall = Object.values(results)\n    .every(v => v === 'PASS') ? 'PASS' : 'FAIL';\n\n  const issues = [];\n\n  if (results.rule1 === 'FAIL') {\n    issues.push({\n      rule: 'rule1',\n      variation: 'Overall',\n      reason: `Expected 3 variations, found ${codeData.variationCount}`\n    });\n  }\n\n  if (results.rule2 === 'FAIL') {\n    for (const d of codeData.details) {\n      if (!d.fieldsComplete) {\n        issues.push({\n          rule: 'rule2',\n          variation: `Variation ${d.variation}`,\n          reason: 'Missing Headline, Body, or CTA'\n        });\n      }\n    }\n  }\n\n  if (results.rule3 === 'FAIL') {\n    for (const d of codeData.details) {\n      if (d.wordCount >= 80) {\n        issues.push({\n          rule: 'rule3',\n          variation: `Variation ${d.variation}`,\n          reason: `Word count ${d.wordCount} exceeds the allowed limit`\n        });\n      }\n    }\n  }\n\n  if (Array.isArray(aiData.issues)) {\n    issues.push(...aiData.issues);\n  }\n\n  const expected = source.expected;\n\n  const comparison = {};\n\n  for (const rule of Object.keys(results)) {\n    comparison[rule] = {\n      expected: expected[rule],\n      actual: results[rule],\n      match: expected[rule] === results[rule]\n    };\n  }\n\n  const matchedRules = Object.values(comparison)\n    .filter(v => v.match).length;\n\n  reports.push({\n    json: {\n      test_case: source.test_case,\n      description: source.description,\n      expected,\n      actual: results,\n      overall,\n      evaluation_accuracy: `${matchedRules}/5`,\n      test_passed: matchedRules === 5,\n      passed_rules: Object.values(results)\n        .filter(v => v === 'PASS').length,\n      failed_rules: Object.values(results)\n        .filter(v => v === 'FAIL').length,\n      comparison,\n      issues\n    },\n    pairedItem: { item: i }\n  });\n}\n\nreturn reports;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        0
+      ],
+      "id": "39dcc72d-19cc-43c9-80a1-07dbb312177f",
+      "name": "Generate QA Report"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst reports = $input.all().map(item => item.json);\n\nconst totalTests = reports.length;\n\nif (totalTests === 0) {\n  throw new Error(\"No test reports received\");\n}\n\nconst passedTests = reports.filter(\n  r => r.test_passed === true\n);\n\nconst failedTests = reports.filter(\n  r => r.test_passed !== true\n);\n\nlet totalRuleChecks = 0;\nlet matchedRules = 0;\n\nfor (const report of reports) {\n  const comparisons = Object.values(report.comparison ?? {});\n\n  totalRuleChecks += comparisons.length;\n\n  matchedRules += comparisons.filter(\n    c => c.match === true\n  ).length;\n}\n\nconst accuracy = totalRuleChecks > 0\n  ? (matchedRules / totalRuleChecks * 100).toFixed(1) + \"%\"\n  : \"N/A\";\n\nreturn [{\n  json: {\n    project: \"AI Marketing Agent Evaluation Harness\",\n    total_tests: totalTests,\n    tests_passed: passedTests.length,\n    tests_failed: failedTests.length,\n    rule_matches: matchedRules,\n    total_rule_checks: totalRuleChecks,\n    accuracy,\n    failed_test_cases: failedTests.map(r => r.test_case),\n    test_details: reports.map(r => ({\n      test_case: r.test_case,\n      overall: r.overall,\n      evaluation_accuracy: r.evaluation_accuracy,\n      test_passed: r.test_passed\n    }))\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        0
+      ],
+      "id": "42370c50-cac5-45ac-9356-09ee6e60f485",
+      "name": "Test Summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst tests = [\n  {\n    test_case: \"TC-001\",\n    description: \"Valid advertising copy\",\n    test_copy: `Variation 1:\nHeadline: Organize Tasks with TaskFlow\nBody: Help your small team track tasks and manage deadlines with reminders.\nCTA: Start Your Free Trial\n\nVariation 2:\nHeadline: Keep Your Team on Track\nBody: TaskFlow makes task tracking and team collaboration easier for small businesses.\nCTA: Try TaskFlow Free\n\nVariation 3:\nHeadline: Simplify Teamwork\nBody: Track tasks, collaborate with your team, and stay informed with deadline reminders.\nCTA: Start Your Free Trial`,\n    expected: {\n      rule1: \"PASS\",\n      rule2: \"PASS\",\n      rule3: \"PASS\",\n      rule4: \"PASS\",\n      rule5: \"PASS\"\n    }\n  },\n  {\n    test_case: \"TC-002\",\n    description: \"Unsupported product claims\",\n    test_copy: `Variation 1:\nHeadline: Double Your Productivity\nBody: TaskFlow guarantees a 200% productivity increase for every small business.\nCTA: Start Your Free Trial\n\nVariation 2:\nHeadline: The World's Number One Platform\nBody: Over one million companies trust TaskFlow for AI automation and payroll processing.\nCTA: Try TaskFlow Free\n\nVariation 3:\nHeadline: Never Miss a Deadline Again\nBody: TaskFlow guarantees you will never miss a deadline.\nCTA: Start Your Free Trial`,\n    expected: {\n      rule1: \"PASS\",\n      rule2: \"PASS\",\n      rule3: \"PASS\",\n      rule4: \"PASS\",\n      rule5: \"FAIL\"\n    }\n  },\n  {\n    test_case: \"TC-004\",\n    description: \"Missing variation and CTA\",\n    test_copy: `Variation 1:\nHeadline: Manage Projects with TaskFlow\nBody: Track tasks, collaborate with your team, and manage deadlines using reminders.\nCTA: Start Your Free Trial\n\nVariation 2:\nHeadline: Keep Your Small Team Organized\nBody: TaskFlow helps small businesses organize tasks and work together more effectively.`,\n    expected: {\n      rule1: \"FAIL\",\n      rule2: \"FAIL\",\n      rule3: \"PASS\",\n      rule4: \"PASS\",\n      rule5: \"PASS\"\n    }\n  }\n];\n\nreturn tests.map(test => ({\n  json: test\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        96,
+        0
+      ],
+      "id": "247b6031-b6b1-4e1f-bbd7-590a9f940d0e",
+      "name": "Load Test Cases"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map(item => {\n  const text = String(item.json.test_copy ?? \"\")\n    .replace(/\\\\n/g, \"\\n\");\n\n  const sections = text\n    .split(/(?=Variation\\s+\\d+\\s*:)/i)\n    .filter(s => /^Variation\\s+\\d+\\s*:/i.test(s.trim()));\n\n  const rule1 = sections.length === 3 ? \"PASS\" : \"FAIL\";\n\n  const details = sections.map((section, index) => {\n    const headline = /(?:^|\\n)Headline\\s*:\\s*(.+)/i.exec(section);\n    const body = /(?:^|\\n)Body\\s*:\\s*(.+)/i.exec(section);\n    const cta = /(?:^|\\n)CTA\\s*:\\s*(.+)/i.exec(section);\n\n    const fieldsComplete = Boolean(\n      headline?.[1]?.trim() &&\n      body?.[1]?.trim() &&\n      cta?.[1]?.trim()\n    );\n\n    const content = [headline?.[1], body?.[1], cta?.[1]]\n      .filter(Boolean).join(\" \");\n\n    const wordCount = content.trim()\n      ? content.trim().split(/\\s+/).length\n      : 0;\n\n    return {\n      variation: index + 1,\n      fieldsComplete,\n      wordCount\n    };\n  });\n\n  const rule2 = sections.length > 0 &&\n    details.every(d => d.fieldsComplete)\n    ? \"PASS\" : \"FAIL\";\n\n  const rule3 = sections.length > 0 &&\n    details.every(d => d.wordCount < 80)\n    ? \"PASS\" : \"FAIL\";\n\n  return {\n    json: {\n      ...item.json,\n      code_results: {\n        rule1,\n        rule2,\n        rule3,\n        variationCount: sections.length,\n        details\n      }\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "a492de01-df62-479c-83c4-dadf0d712eb0",
+      "name": "Validate Rules 1-3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "278857d3-7b17-455f-9b21-faaef8fa4c6d",
+              "leftValue": "={{ $json.overall }}",
+              "rightValue": "FAIL",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        -224,
+        512
+      ],
+      "id": "8c42c80f-0ebe-4e85-a864-b15d314303ff",
+      "name": "Needs Repair"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst repairedItems = $input.all();\nconst repairInputs = $('Prepare Repair Input').all();\n\nif (repairedItems.length !== repairInputs.length) {\n  throw new Error(\n    `Item count mismatch: repaired=${repairedItems.length}, input=${repairInputs.length}`\n  );\n}\n\nreturn repairedItems.map((item, index) => {\n  const source = repairInputs[index].json;\n\n  const repairedCopy =\n    item.json.text ??\n    item.json.output ??\n    item.json.response;\n\n  if (\n    typeof repairedCopy !== 'string' ||\n    !repairedCopy.trim()\n  ) {\n    throw new Error(\n      `Missing repaired copy for ${source.test_case}`\n    );\n  }\n\n  return {\n    json: {\n      test_case: source.test_case,\n      description: source.description,\n      original_copy: source.original_copy,\n      test_copy: repairedCopy.trim(),\n      previous_overall: source.previous_overall,\n      previous_issues: source.issues,\n      repair_attempt: source.repair_attempt\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        432,
+        496
+      ],
+      "id": "33f0cff0-5547-46e4-aa03-329ab537d591",
+      "name": "Prepare Re-Evaluation（Code）"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map(item => {\n  const text = String(item.json.test_copy ?? \"\")\n    .replace(/\\\\n/g, \"\\n\");\n\n  const sections = text\n    .split(/(?=Variation\\s+\\d+\\s*:)/i)\n    .filter(s => /^Variation\\s+\\d+\\s*:/i.test(s.trim()));\n\n  const rule1 = sections.length === 3 ? \"PASS\" : \"FAIL\";\n\n  const details = sections.map((section, index) => {\n    const headline = /(?:^|\\n)Headline\\s*:\\s*(.+)/i.exec(section);\n    const body = /(?:^|\\n)Body\\s*:\\s*(.+)/i.exec(section);\n    const cta = /(?:^|\\n)CTA\\s*:\\s*(.+)/i.exec(section);\n\n    const fieldsComplete = Boolean(\n      headline?.[1]?.trim() &&\n      body?.[1]?.trim() &&\n      cta?.[1]?.trim()\n    );\n\n    const content = [headline?.[1], body?.[1], cta?.[1]]\n      .filter(Boolean).join(\" \");\n\n    const wordCount = content.trim()\n      ? content.trim().split(/\\s+/).length\n      : 0;\n\n    return {\n      variation: index + 1,\n      fieldsComplete,\n      wordCount\n    };\n  });\n\n  const rule2 = sections.length > 0 &&\n    details.every(d => d.fieldsComplete)\n    ? \"PASS\" : \"FAIL\";\n\n  const rule3 = sections.length > 0 &&\n    details.every(d => d.wordCount < 80)\n    ? \"PASS\" : \"FAIL\";\n\n  return {\n    json: {\n      ...item.json,\n      code_results: {\n        rule1,\n        rule2,\n        rule3,\n        variationCount: sections.length,\n        details\n      }\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        496
+      ],
+      "id": "a25c9207-0fbb-47c6-af78-ca4d0c0f807c",
+      "name": "Re-Evaluate Rules 1-3"
+    },
+    {
+      "parameters": {
+        "promptType": "=define",
+        "text": "={{ 'Evaluate ONLY the following advertising copy:\\n\\n' + $json.test_copy}}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": " You are a marketing copy quality evaluator. \n Evaluate ONLY Rule 4 and Rule 5.  \nPRODUCT CONTEXT: Product: TaskFlow Audience: Small businesses with 5-30 employees \nPlatform: Facebook \nCampaign objective: Free trial sign-ups  CONFIRMED PRODUCT FEATURES: - Task tracking - Team collaboration - Deadline reminders  RULE 4 - AUDIENCE RELEVANCE: PASS if the advertising copy is relevant to small businesses and encourages free trial sign-ups. FAIL if it is clearly irrelevant to the target audience or campaign objective.  RULE 5 - FACTUAL ACCURACY: PASS if the copy contains no unsupported product claims. FAIL if it invents features, statistics, guarantees, rankings, or absolute promises.  Do not assume unlisted product capabilities are confirmed.  IMPORTANT: - Do not evaluate Rule 1, Rule 2, or Rule 3. - Do not count variations or words. - Do not evaluate CTA field completeness. - Evaluate the actual advertising claims. - Report specific evidence for any failure.  OUTPUT: Return ONLY valid JSON with this structure:  {   \"rule4\": \"PASS\",   \"rule5\": \"PASS\",   \"issues\": [] }  Use PASS or FAIL for each rule. For each issue, include: {   \"rule\": \"rule4 or rule5\",   \"variation\": \"affected variation\",   \"phrase\": \"exact problematic phrase\",   \"reason\": \"why it fails\",   \"suggestion\": \"how to fix it\" }  If there are no issues, return an empty issues array. Do not output Markdown or explanations outside JSON."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        368,
+        0
+      ],
+      "id": "2e2c0874-275e-4757-ada9-4139f03de668",
+      "name": "Evaluate Rules 4-5"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst aiItems = $input.all();\nconst sourceItems = $('Re-Evaluate Rules 1-3').all();\n\nif (aiItems.length !== sourceItems.length) {\n  throw new Error('AI and source item counts do not match');\n}\n\nreturn aiItems.map((item, index) => {\n  const source = sourceItems[index].json;\n  const raw = item.json;\n\n  let ai = raw.output ?? raw.text ?? raw;\n\n  if (typeof ai === 'string') {\n    const cleaned = ai\n      .replace(/^```(?:json)?\\s*/i, '')\n      .replace(/\\s*```$/, '')\n      .trim();\n\n    ai = JSON.parse(cleaned);\n  }\n\n  const codeData = source.code_results;\n\n  const results = {\n    rule1: codeData.rule1,\n    rule2: codeData.rule2,\n    rule3: codeData.rule3,\n    rule4: ai.rule4,\n    rule5: ai.rule5\n  };\n\n  for (const [rule, value] of Object.entries(results)) {\n    if (!['PASS', 'FAIL'].includes(value)) {\n      throw new Error(\n        `${source.test_case}: Invalid ${rule} result: ${value}`\n      );\n    }\n  }\n\n  const overall = Object.values(results).every(\n    value => value === 'PASS'\n  ) ? 'PASS' : 'FAIL';\n\n  // Collect deterministic rule failures\n  const issues = [];\n\n  if (results.rule1 === 'FAIL') {\n    issues.push({\n      rule: 'rule1',\n      variation: 'Overall',\n      reason: `Expected 3 variations, found ${codeData.variationCount}`\n    });\n  }\n\n  if (results.rule2 === 'FAIL') {\n    for (const detail of codeData.details) {\n      if (!detail.fieldsComplete) {\n        issues.push({\n          rule: 'rule2',\n          variation: `Variation ${detail.variation}`,\n          reason: 'Missing Headline, Body, or CTA'\n        });\n      }\n    }\n  }\n\n  if (results.rule3 === 'FAIL') {\n    for (const detail of codeData.details) {\n      if (detail.wordCount >= 80) {\n        issues.push({\n          rule: 'rule3',\n          variation: `Variation ${detail.variation}`,\n          reason: `Word count ${detail.wordCount} exceeds the allowed limit`\n        });\n      }\n    }\n  }\n\n  // Add AI evaluation findings\n  if (Array.isArray(ai.issues)) {\n    issues.push(...ai.issues);\n  }\n\n  return {\n    json: {\n      test_case: source.test_case,\n      description: source.description,\n      repair_attempt: source.repair_attempt,\n      previous_overall: source.previous_overall,\n      final_overall: overall,\n      repair_successful: overall === 'PASS',\n      original_copy: source.original_copy,\n      repaired_copy: source.test_copy,\n      final_rules: results,\n      remaining_issues: issues\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        496
+      ],
+      "id": "1ff16b57-5cfb-4a58-87dd-5a2c4a4d02bd",
+      "name": "Recovery Result"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "c4ebe510-f78c-452c-9b36-8aa64234e9a2",
+              "leftValue": "={{ $json.final_overall }}",
+              "rightValue": "FAIL",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "b2769f09-b371-4508-b3e3-6197c626f0af",
+              "leftValue": "={{ $json.repair_attempt }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        1344,
+        496
+      ],
+      "id": "cc2b4fe5-f473-4263-ad74-32a60ceb52a0",
+      "name": "Retry needed?"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\nconst originalCases = $('Load Test Cases').all();\n\nreturn items.map((item, index) => {\n  const data = item.json;\n\n  const original = originalCases.find(\n    test => test.json.test_case === data.test_case\n  );\n\n  if (!original) {\n    throw new Error(\n      `Original test case not found: ${data.test_case}`\n    );\n  }\n\n  return {\n    json: {\n      test_case: data.test_case,\n      description: data.description,\n      original_copy: original.json.test_copy,\n      test_copy: original.json.test_copy,\n      issues: data.issues ?? [],\n      repair_attempt: 1,\n      previous_overall: data.overall\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        496
+      ],
+      "id": "ec0891d8-86c8-48ac-8db3-aa40c76a571b",
+      "name": "Prepare Repair Input"
+    },
+    {
+      "parameters": {
+        "promptType": "=define",
+        "text": "={{ 'Evaluate ONLY the following advertising copy:\\n\\n' + $json.test_copy}}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": " You are a marketing copy quality evaluator. \n Evaluate ONLY Rule 4 and Rule 5.  \nPRODUCT CONTEXT: Product: TaskFlow Audience: Small businesses with 5-30 employees \nPlatform: Facebook \nCampaign objective: Free trial sign-ups  CONFIRMED PRODUCT FEATURES: - Task tracking - Team collaboration - Deadline reminders  RULE 4 - AUDIENCE RELEVANCE: PASS if the advertising copy is relevant to small businesses and encourages free trial sign-ups. FAIL if it is clearly irrelevant to the target audience or campaign objective.  RULE 5 - FACTUAL ACCURACY: PASS if the copy contains no unsupported product claims. FAIL if it invents features, statistics, guarantees, rankings, or absolute promises.  Do not assume unlisted product capabilities are confirmed.  IMPORTANT: - Do not evaluate Rule 1, Rule 2, or Rule 3. - Do not count variations or words. - Do not evaluate CTA field completeness. - Evaluate the actual advertising claims. - Report specific evidence for any failure.  OUTPUT: Return ONLY valid JSON with this structure:  {   \"rule4\": \"PASS\",   \"rule5\": \"PASS\",   \"issues\": [] }  Use PASS or FAIL for each rule. For each issue, include: {   \"rule\": \"rule4 or rule5\",   \"variation\": \"affected variation\",   \"phrase\": \"exact problematic phrase\",   \"reason\": \"why it fails\",   \"suggestion\": \"how to fix it\" }  If there are no issues, return an empty issues array. Do not output Markdown or explanations outside JSON."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        768,
+        496
+      ],
+      "id": "fcd9bbdb-7f6c-408c-9fbf-2e4a41c9ce4b",
+      "name": "Re-Evaluate Rules 4-5"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map((item, index) => {\n  const data = item.json;\n\n  if (!data.test_case || !data.repaired_copy) {\n    throw new Error('Missing test case or repaired copy');\n  }\n\n  const nextAttempt = Number(data.repair_attempt) + 1;\n\n  if (nextAttempt > 3) {\n    throw new Error(\n      `${data.test_case}: Maximum repair attempts exceeded`\n    );\n  }\n\n  return {\n    json: {\n      test_case: data.test_case,\n      description: data.description,\n      original_copy: data.original_copy,\n      test_copy: data.repaired_copy,\n      issues: data.remaining_issues ?? [],\n      previous_overall: data.final_overall,\n      repair_attempt: nextAttempt\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        1024
+      ],
+      "id": "a868ef29-2e93-4b6e-8f30-6b8c7d77a763",
+      "name": "Prepare Retry Input"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Repair the following advertising copy based on the QA findings.\\n\\nOriginal copy:\\n' + $json.test_copy + '\\n\\nQA issues:\\n' + JSON.stringify($json.issues) }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an advertising copy repair agent.\n\nProduct: TaskFlow\nConfirmed features ONLY:\n- Task tracking\n- Team collaboration\n- Deadline reminders\n\nTarget audience: Small businesses with 5-30 employees.\nPlatform: Facebook.\nGoal: Encourage users to start a free trial.\n\nRepair the supplied advertising copy according to these rules:\n1. Produce exactly 3 variations.\n2. Every variation must include Headline, Body, and CTA.\n3. Each variation must contain fewer than 80 English words.\n4. The copy must be relevant to small businesses and promote the free trial.\n5. Do not invent product features, statistics, rankings, guarantees, or absolute promises.\n\nUse the QA issues to fix the original copy. Preserve compliant content where possible.\n\nReturn ONLY the repaired advertising copy, using this exact structure:\nVariation 1:\nHeadline: ...\nBody: ...\nCTA: ...\n\nVariation 2:\nHeadline: ...\nBody: ...\nCTA: ...\n\nVariation 3:\nHeadline: ...\nBody: ...\nCTA: ...\n\nDo not include explanations, markdown fences, or commentary."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        144,
+        496
+      ],
+      "id": "c08bd7ca-d393-4361-9fed-a3bae67ee377",
+      "name": "AI Repair Chain"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Repair the following advertising copy based on the QA findings.\\n\\nOriginal copy:\\n' + $json.test_copy + '\\n\\nQA issues:\\n' + JSON.stringify($json.issues) }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an advertising copy repair agent.\n\nProduct: TaskFlow\nConfirmed features ONLY:\n- Task tracking\n- Team collaboration\n- Deadline reminders\n\nTarget audience: Small businesses with 5-30 employees.\nPlatform: Facebook.\nGoal: Encourage users to start a free trial.\n\nRepair the supplied advertising copy according to these rules:\n1. Produce exactly 3 variations.\n2. Every variation must include Headline, Body, and CTA.\n3. Each variation must contain fewer than 80 English words.\n4. The copy must be relevant to small businesses and promote the free trial.\n5. Do not invent product features, statistics, rankings, guarantees, or absolute promises.\n\nUse the QA issues to fix the original copy. Preserve compliant content where possible.\n\nReturn ONLY the repaired advertising copy, using this exact structure:\nVariation 1:\nHeadline: ...\nBody: ...\nCTA: ...\n\nVariation 2:\nHeadline: ...\nBody: ...\nCTA: ...\n\nVariation 3:\nHeadline: ...\nBody: ...\nCTA: ...\n\nDo not include explanations, markdown fences, or commentary."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -64,
+        1024
+      ],
+      "id": "db37b1c4-b1bd-4a5b-939c-0a1246d3cdd3",
+      "name": "AI Repair Chain - Retry 2"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map(item => {\n  const text = String(item.json.test_copy ?? \"\")\n    .replace(/\\\\n/g, \"\\n\");\n\n  const sections = text\n    .split(/(?=Variation\\s+\\d+\\s*:)/i)\n    .filter(s => /^Variation\\s+\\d+\\s*:/i.test(s.trim()));\n\n  const rule1 = sections.length === 3 ? \"PASS\" : \"FAIL\";\n\n  const details = sections.map((section, index) => {\n    const headline = /(?:^|\\n)Headline\\s*:\\s*(.+)/i.exec(section);\n    const body = /(?:^|\\n)Body\\s*:\\s*(.+)/i.exec(section);\n    const cta = /(?:^|\\n)CTA\\s*:\\s*(.+)/i.exec(section);\n\n    const fieldsComplete = Boolean(\n      headline?.[1]?.trim() &&\n      body?.[1]?.trim() &&\n      cta?.[1]?.trim()\n    );\n\n    const content = [headline?.[1], body?.[1], cta?.[1]]\n      .filter(Boolean).join(\" \");\n\n    const wordCount = content.trim()\n      ? content.trim().split(/\\s+/).length\n      : 0;\n\n    return {\n      variation: index + 1,\n      fieldsComplete,\n      wordCount\n    };\n  });\n\n  const rule2 = sections.length > 0 &&\n    details.every(d => d.fieldsComplete)\n    ? \"PASS\" : \"FAIL\";\n\n  const rule3 = sections.length > 0 &&\n    details.every(d => d.wordCount < 80)\n    ? \"PASS\" : \"FAIL\";\n\n  return {\n    json: {\n      ...item.json,\n      code_results: {\n        rule1,\n        rule2,\n        rule3,\n        variationCount: sections.length,\n        details\n      }\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        1024
+      ],
+      "id": "6e4592b8-5628-461e-92a1-d7bbc70f52f5",
+      "name": "Re-Evaluate Rules 1-3 - Retry 2"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst repairedItems = $input.all();\nconst retryInputs = $('Prepare Retry Input').all();\n\nif (repairedItems.length !== retryInputs.length) {\n  throw new Error(\n    `Retry item count mismatch: AI=${repairedItems.length}, input=${retryInputs.length}`\n  );\n}\n\nreturn repairedItems.map((item, index) => {\n  const source = retryInputs[index].json;\n\n  const repairedCopy =\n    item.json.text ??\n    item.json.output ??\n    item.json.response;\n\n  if (\n    typeof repairedCopy !== 'string' ||\n    !repairedCopy.trim()\n  ) {\n    throw new Error(\n      `Missing repaired copy for ${source.test_case}`\n    );\n  }\n\n  return {\n    json: {\n      test_case: source.test_case,\n      description: source.description,\n      original_copy: source.original_copy,\n      test_copy: repairedCopy.trim(),\n      previous_overall: source.previous_overall,\n      previous_issues: source.issues,\n      repair_attempt: source.repair_attempt\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        1024
+      ],
+      "id": "10d79ebf-da6b-443e-a7af-a1d27ceae9ad",
+      "name": "Prepare Re-Evaluation - Retry 2"
+    },
+    {
+      "parameters": {
+        "promptType": "=define",
+        "text": "={{ 'Evaluate ONLY the following advertising copy:\\n\\n' + $json.test_copy}}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": " You are a marketing copy quality evaluator. \n Evaluate ONLY Rule 4 and Rule 5.  \nPRODUCT CONTEXT: Product: TaskFlow Audience: Small businesses with 5-30 employees \nPlatform: Facebook \nCampaign objective: Free trial sign-ups  CONFIRMED PRODUCT FEATURES: - Task tracking - Team collaboration - Deadline reminders  RULE 4 - AUDIENCE RELEVANCE: PASS if the advertising copy is relevant to small businesses and encourages free trial sign-ups. FAIL if it is clearly irrelevant to the target audience or campaign objective.  RULE 5 - FACTUAL ACCURACY: PASS if the copy contains no unsupported product claims. FAIL if it invents features, statistics, guarantees, rankings, or absolute promises.  Do not assume unlisted product capabilities are confirmed.  IMPORTANT: - Do not evaluate Rule 1, Rule 2, or Rule 3. - Do not count variations or words. - Do not evaluate CTA field completeness. - Evaluate the actual advertising claims. - Report specific evidence for any failure.  OUTPUT: Return ONLY valid JSON with this structure:  {   \"rule4\": \"PASS\",   \"rule5\": \"PASS\",   \"issues\": [] }  Use PASS or FAIL for each rule. For each issue, include: {   \"rule\": \"rule4 or rule5\",   \"variation\": \"affected variation\",   \"phrase\": \"exact problematic phrase\",   \"reason\": \"why it fails\",   \"suggestion\": \"how to fix it\" }  If there are no issues, return an empty issues array. Do not output Markdown or explanations outside JSON."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        592,
+        1024
+      ],
+      "id": "e11b129e-16bb-49c9-b7e6-39f173947dbb",
+      "name": "Re-Evaluate Rules 4-5 - Retry"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst aiItems = $input.all();\nconst sourceItems = $('Re-Evaluate Rules 1-3 - Retry 2').all();\n\nif (aiItems.length !== sourceItems.length) {\n  throw new Error('AI and source item counts do not match');\n}\n\nreturn aiItems.map((item, index) => {\n  const source = sourceItems[index].json;\n  const raw = item.json;\n\n  let ai = raw.output ?? raw.text ?? raw;\n\n  if (typeof ai === 'string') {\n    const cleaned = ai\n      .replace(/^```(?:json)?\\s*/i, '')\n      .replace(/\\s*```$/, '')\n      .trim();\n\n    ai = JSON.parse(cleaned);\n  }\n\n  const codeData = source.code_results;\n\n  const results = {\n    rule1: codeData.rule1,\n    rule2: codeData.rule2,\n    rule3: codeData.rule3,\n    rule4: ai.rule4,\n    rule5: ai.rule5\n  };\n\n  for (const [rule, value] of Object.entries(results)) {\n    if (!['PASS', 'FAIL'].includes(value)) {\n      throw new Error(\n        `${source.test_case}: Invalid ${rule} result: ${value}`\n      );\n    }\n  }\n\n  const overall = Object.values(results).every(\n    value => value === 'PASS'\n  ) ? 'PASS' : 'FAIL';\n\n  // Collect deterministic rule failures\n  const issues = [];\n\n  if (results.rule1 === 'FAIL') {\n    issues.push({\n      rule: 'rule1',\n      variation: 'Overall',\n      reason: `Expected 3 variations, found ${codeData.variationCount}`\n    });\n  }\n\n  if (results.rule2 === 'FAIL') {\n    for (const detail of codeData.details) {\n      if (!detail.fieldsComplete) {\n        issues.push({\n          rule: 'rule2',\n          variation: `Variation ${detail.variation}`,\n          reason: 'Missing Headline, Body, or CTA'\n        });\n      }\n    }\n  }\n\n  if (results.rule3 === 'FAIL') {\n    for (const detail of codeData.details) {\n      if (detail.wordCount >= 80) {\n        issues.push({\n          rule: 'rule3',\n          variation: `Variation ${detail.variation}`,\n          reason: `Word count ${detail.wordCount} exceeds the allowed limit`\n        });\n      }\n    }\n  }\n\n  // Add AI evaluation findings\n  if (Array.isArray(ai.issues)) {\n    issues.push(...ai.issues);\n  }\n\n  return {\n    json: {\n      test_case: source.test_case,\n      description: source.description,\n      repair_attempt: source.repair_attempt,\n      previous_overall: source.previous_overall,\n      final_overall: overall,\n      repair_successful: overall === 'PASS',\n      original_copy: source.original_copy,\n      repaired_copy: source.test_copy,\n      final_rules: results,\n      remaining_issues: issues\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1024
+      ],
+      "id": "abf86bfe-58df-4c45-878b-336fc3b0c915",
+      "name": "Recovery Result - Retry 2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "c4ebe510-f78c-452c-9b36-8aa64234e9a2",
+              "leftValue": "={{ $json.final_overall }}",
+              "rightValue": "FAIL",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "b2769f09-b371-4508-b3e3-6197c626f0af",
+              "leftValue": "={{ $json.repair_attempt }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        1344,
+        1024
+      ],
+      "id": "727be6ec-1293-488e-8607-f6233bf27f78",
+      "name": "Retry needed? - Retry 2"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map((item, index) => {\n  const data = item.json;\n\n  if (!data.test_case || !data.repaired_copy) {\n    throw new Error('Missing test case or repaired copy');\n  }\n\n  const nextAttempt = Number(data.repair_attempt) + 1;\n\n  if (nextAttempt > 3) {\n    throw new Error(\n      `${data.test_case}: Maximum repair attempts exceeded`\n    );\n  }\n\n  return {\n    json: {\n      test_case: data.test_case,\n      description: data.description,\n      original_copy: data.original_copy,\n      test_copy: data.repaired_copy,\n      issues: data.remaining_issues ?? [],\n      previous_overall: data.final_overall,\n      repair_attempt: nextAttempt\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        1424
+      ],
+      "id": "6a5b36c7-1381-4509-8188-faca130f50d0",
+      "name": "Prepare Retry Input - Retry 3"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Repair the following advertising copy based on the QA findings.\\n\\nOriginal copy:\\n' + $json.test_copy + '\\n\\nQA issues:\\n' + JSON.stringify($json.issues) }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an advertising copy repair agent.\n\nProduct: TaskFlow\nConfirmed features ONLY:\n- Task tracking\n- Team collaboration\n- Deadline reminders\n\nTarget audience: Small businesses with 5-30 employees.\nPlatform: Facebook.\nGoal: Encourage users to start a free trial.\n\nRepair the supplied advertising copy according to these rules:\n1. Produce exactly 3 variations.\n2. Every variation must include Headline, Body, and CTA.\n3. Each variation must contain fewer than 80 English words.\n4. The copy must be relevant to small businesses and promote the free trial.\n5. Do not invent product features, statistics, rankings, guarantees, or absolute promises.\n\nUse the QA issues to fix the original copy. Preserve compliant content where possible.\n\nReturn ONLY the repaired advertising copy, using this exact structure:\nVariation 1:\nHeadline: ...\nBody: ...\nCTA: ...\n\nVariation 2:\nHeadline: ...\nBody: ...\nCTA: ...\n\nVariation 3:\nHeadline: ...\nBody: ...\nCTA: ...\n\nDo not include explanations, markdown fences, or commentary."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -48,
+        1424
+      ],
+      "id": "9c60a1cb-3f1e-40c9-a4b9-acedf55c29e4",
+      "name": "AI Repair Chain - Retry 3"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst repairedItems = $input.all();\nconst retryInputs = $('Prepare Retry Input - Retry 3').all();\n\nif (repairedItems.length !== retryInputs.length) {\n  throw new Error(\n    `Retry item count mismatch: AI=${repairedItems.length}, input=${retryInputs.length}`\n  );\n}\n\nreturn repairedItems.map((item, index) => {\n  const source = retryInputs[index].json;\n\n  const repairedCopy =\n    item.json.text ??\n    item.json.output ??\n    item.json.response;\n\n  if (\n    typeof repairedCopy !== 'string' ||\n    !repairedCopy.trim()\n  ) {\n    throw new Error(\n      `Missing repaired copy for ${source.test_case}`\n    );\n  }\n\n  return {\n    json: {\n      test_case: source.test_case,\n      description: source.description,\n      original_copy: source.original_copy,\n      test_copy: repairedCopy.trim(),\n      previous_overall: source.previous_overall,\n      previous_issues: source.issues,\n      repair_attempt: source.repair_attempt\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        1424
+      ],
+      "id": "439597a1-505b-4f03-9d3d-2e297601b47e",
+      "name": "Prepare Re-Evaluation - Retry 3"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map(item => {\n  const text = String(item.json.test_copy ?? \"\")\n    .replace(/\\\\n/g, \"\\n\");\n\n  const sections = text\n    .split(/(?=Variation\\s+\\d+\\s*:)/i)\n    .filter(s => /^Variation\\s+\\d+\\s*:/i.test(s.trim()));\n\n  const rule1 = sections.length === 3 ? \"PASS\" : \"FAIL\";\n\n  const details = sections.map((section, index) => {\n    const headline = /(?:^|\\n)Headline\\s*:\\s*(.+)/i.exec(section);\n    const body = /(?:^|\\n)Body\\s*:\\s*(.+)/i.exec(section);\n    const cta = /(?:^|\\n)CTA\\s*:\\s*(.+)/i.exec(section);\n\n    const fieldsComplete = Boolean(\n      headline?.[1]?.trim() &&\n      body?.[1]?.trim() &&\n      cta?.[1]?.trim()\n    );\n\n    const content = [headline?.[1], body?.[1], cta?.[1]]\n      .filter(Boolean).join(\" \");\n\n    const wordCount = content.trim()\n      ? content.trim().split(/\\s+/).length\n      : 0;\n\n    return {\n      variation: index + 1,\n      fieldsComplete,\n      wordCount\n    };\n  });\n\n  const rule2 = sections.length > 0 &&\n    details.every(d => d.fieldsComplete)\n    ? \"PASS\" : \"FAIL\";\n\n  const rule3 = sections.length > 0 &&\n    details.every(d => d.wordCount < 80)\n    ? \"PASS\" : \"FAIL\";\n\n  return {\n    json: {\n      ...item.json,\n      code_results: {\n        rule1,\n        rule2,\n        rule3,\n        variationCount: sections.length,\n        details\n      }\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        1424
+      ],
+      "id": "dfcfd825-9dd8-48f3-b1cc-cd04eda3e4ad",
+      "name": "Re-Evaluate Rules 1-3 - Retry 3"
+    },
+    {
+      "parameters": {
+        "promptType": "=define",
+        "text": "={{ 'Evaluate ONLY the following advertising copy:\\n\\n' + $json.test_copy}}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": " You are a marketing copy quality evaluator. \n Evaluate ONLY Rule 4 and Rule 5.  \nPRODUCT CONTEXT: Product: TaskFlow Audience: Small businesses with 5-30 employees \nPlatform: Facebook \nCampaign objective: Free trial sign-ups  CONFIRMED PRODUCT FEATURES: - Task tracking - Team collaboration - Deadline reminders  RULE 4 - AUDIENCE RELEVANCE: PASS if the advertising copy is relevant to small businesses and encourages free trial sign-ups. FAIL if it is clearly irrelevant to the target audience or campaign objective.  RULE 5 - FACTUAL ACCURACY: PASS if the copy contains no unsupported product claims. FAIL if it invents features, statistics, guarantees, rankings, or absolute promises.  Do not assume unlisted product capabilities are confirmed.  IMPORTANT: - Do not evaluate Rule 1, Rule 2, or Rule 3. - Do not count variations or words. - Do not evaluate CTA field completeness. - Evaluate the actual advertising claims. - Report specific evidence for any failure.  OUTPUT: Return ONLY valid JSON with this structure:  {   \"rule4\": \"PASS\",   \"rule5\": \"PASS\",   \"issues\": [] }  Use PASS or FAIL for each rule. For each issue, include: {   \"rule\": \"rule4 or rule5\",   \"variation\": \"affected variation\",   \"phrase\": \"exact problematic phrase\",   \"reason\": \"why it fails\",   \"suggestion\": \"how to fix it\" }  If there are no issues, return an empty issues array. Do not output Markdown or explanations outside JSON."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        576,
+        1424
+      ],
+      "id": "e78b2a77-c8c4-4d59-ae90-ca8192d402aa",
+      "name": "Re-Evaluate Rules 4-5 - Retry1"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst aiItems = $input.all();\nconst sourceItems = $('Re-Evaluate Rules 1-3 - Retry 3').all();\n\nif (aiItems.length !== sourceItems.length) {\n  throw new Error('AI and source item counts do not match');\n}\n\nreturn aiItems.map((item, index) => {\n  const source = sourceItems[index].json;\n  const raw = item.json;\n\n  let ai = raw.output ?? raw.text ?? raw;\n\n  if (typeof ai === 'string') {\n    const cleaned = ai\n      .replace(/^```(?:json)?\\s*/i, '')\n      .replace(/\\s*```$/, '')\n      .trim();\n\n    ai = JSON.parse(cleaned);\n  }\n\n  const codeData = source.code_results;\n\n  const results = {\n    rule1: codeData.rule1,\n    rule2: codeData.rule2,\n    rule3: codeData.rule3,\n    rule4: ai.rule4,\n    rule5: ai.rule5\n  };\n\n  for (const [rule, value] of Object.entries(results)) {\n    if (!['PASS', 'FAIL'].includes(value)) {\n      throw new Error(\n        `${source.test_case}: Invalid ${rule} result: ${value}`\n      );\n    }\n  }\n\n  const overall = Object.values(results).every(\n    value => value === 'PASS'\n  ) ? 'PASS' : 'FAIL';\n\n  // Collect deterministic rule failures\n  const issues = [];\n\n  if (results.rule1 === 'FAIL') {\n    issues.push({\n      rule: 'rule1',\n      variation: 'Overall',\n      reason: `Expected 3 variations, found ${codeData.variationCount}`\n    });\n  }\n\n  if (results.rule2 === 'FAIL') {\n    for (const detail of codeData.details) {\n      if (!detail.fieldsComplete) {\n        issues.push({\n          rule: 'rule2',\n          variation: `Variation ${detail.variation}`,\n          reason: 'Missing Headline, Body, or CTA'\n        });\n      }\n    }\n  }\n\n  if (results.rule3 === 'FAIL') {\n    for (const detail of codeData.details) {\n      if (detail.wordCount >= 80) {\n        issues.push({\n          rule: 'rule3',\n          variation: `Variation ${detail.variation}`,\n          reason: `Word count ${detail.wordCount} exceeds the allowed limit`\n        });\n      }\n    }\n  }\n\n  // Add AI evaluation findings\n  if (Array.isArray(ai.issues)) {\n    issues.push(...ai.issues);\n  }\n\n  return {\n    json: {\n      test_case: source.test_case,\n      description: source.description,\n      repair_attempt: source.repair_attempt,\n      previous_overall: source.previous_overall,\n      final_overall: overall,\n      repair_successful: overall === 'PASS',\n      original_copy: source.original_copy,\n      repaired_copy: source.test_copy,\n      final_rules: results,\n      remaining_issues: issues\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1424
+      ],
+      "id": "066f246b-4d3e-470c-b263-6e13624a03f3",
+      "name": "Recovery Result - Retry 3"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map((item, index) => {\n  const data = item.json;\n  const attempt = Number(data.repair_attempt);\n\n  if (attempt !== 3) {\n    throw new Error(\n      `${data.test_case}: Expected attempt 3, got ${attempt}`\n    );\n  }\n\n  const success = data.final_overall === 'PASS';\n\n  return {\n    json: {\n      ...data,\n      retry_status: success\n        ? 'RECOVERED'\n        : 'MAX_RETRIES_EXCEEDED',\n      max_retries: 3,\n      is_terminal: true\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        1424
+      ],
+      "id": "4c5f6b55-1e8d-4988-8df5-f96ea3f5f97e",
+      "name": "Finalize Retry 3"
+    },
+    {
+      "parameters": {
+        "content": "01 - Test Cases & Initial Evaluation",
+        "height": 432,
+        "width": 1552,
+        "color": "#98A0A9"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        -80
+      ],
+      "id": "471006a5-57af-4918-9b0e-d60aef131e3b",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "238587d6-b02c-48bf-bf65-c1395a1c714a",
+              "name": "test_copy",
+              "value": "Variation 1:\nHeadline: Manage Projects with TaskFlow\nBody: Track tasks, collaborate with your team, and manage deadlines using reminders.\nCTA: Start Your Free Trial\n\nVariation 2:\nHeadline: Keep Your Small Team Organized\nBody: TaskFlow helps small businesses organize tasks and work together more effectively.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -64,
+        0
+      ],
+      "id": "c2b2e0bb-eadd-4c16-866c-7b3d606eae42",
+      "name": "Set Sample Input"
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:9b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        368,
+        192
+      ],
+      "id": "a8a2db86-dcac-4f8a-9ba9-adcb2f100921",
+      "name": "Qwen 9B — Initial Evaluation",
+      "credentials": {
+        "ollamaApi": {
+          "id": "TqcDeneiMX4XcUZ6",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "02 - Automated Repair & Re-Evaluation",
+        "height": 448,
+        "width": 1552,
+        "color": "#95ACA8"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        400
+      ],
+      "id": "0423cd83-6bf6-425d-93d7-50c0ff5d71f5",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:9b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        144,
+        672
+      ],
+      "id": "16efe931-167c-4792-a07f-5f750742fb6f",
+      "name": "Qwen 9B — Copy Repair",
+      "credentials": {
+        "ollamaApi": {
+          "id": "TqcDeneiMX4XcUZ6",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:9b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        768,
+        688
+      ],
+      "id": "1239faa0-5079-4396-a3d2-1523e196f193",
+      "name": "Qwen 9B — Re-Evaluation",
+      "credentials": {
+        "ollamaApi": {
+          "id": "TqcDeneiMX4XcUZ6",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "03 - Multi-Round Retry & Recovery",
+        "height": 864,
+        "width": 1552,
+        "color": "#284277"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        896
+      ],
+      "id": "d5a4905b-3d99-4484-947d-0aba9cae2270",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:9b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        1200
+      ],
+      "id": "0b5854d7-a03b-4ad0-81c0-9069bc7de8de",
+      "name": "Qwen 9B — Repair Retry 2",
+      "credentials": {
+        "ollamaApi": {
+          "id": "TqcDeneiMX4XcUZ6",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:9b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        592,
+        1216
+      ],
+      "id": "b6ca2379-6928-4039-bcb0-18fa3de6f837",
+      "name": "Qwen 9B — Evaluate Retry 2",
+      "credentials": {
+        "ollamaApi": {
+          "id": "TqcDeneiMX4XcUZ6",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:9b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        1600
+      ],
+      "id": "1d1d4af5-5f8f-47d4-a92e-6898d306800c",
+      "name": "Qwen 9B — Repair Retry 3",
+      "credentials": {
+        "ollamaApi": {
+          "id": "TqcDeneiMX4XcUZ6",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "qwen3.5:9b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        576,
+        1600
+      ],
+      "id": "0d9181e5-1560-452b-aee7-0e0e576a8782",
+      "name": "Qwen 9B — Evaluate Retry 3",
+      "credentials": {
+        "ollamaApi": {
+          "id": "TqcDeneiMX4XcUZ6",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const initial = $('Generate QA Report').all().map(i => i.json);\n\n// 读取已经执行过的修复节点\nfunction readResults(nodeName) {\n  try {\n    return $(nodeName).all().map(i => i.json);\n  } catch (e) {\n    return [];\n  }\n}\n\nconst rounds = [\n  ...readResults('Recovery Result'),\n  ...readResults('Recovery Result - Retry 2'),\n  ...readResults('Finalize Retry 3'),\n  ...$input.all().map(i => i.json)\n];\n\n// 按测试案例去重，保留修复次数最多的结果\nconst latest = new Map();\n\nfor (const r of rounds) {\n  if (!r.test_case) continue;\n\n  const old = latest.get(r.test_case);\n  if (!old || Number(r.repair_attempt) >= Number(old.repair_attempt)) {\n    latest.set(r.test_case, r);\n  }\n}\n\nconst cases = initial.map(r => {\n  const repaired = latest.get(r.test_case);\n\n  return {\n    test_case: r.test_case,\n    final_overall: repaired?.final_overall ?? r.overall,\n    repair_attempt: repaired ? Number(repaired.repair_attempt) : 0,\n    remaining_issues: repaired?.remaining_issues ?? r.issues ?? []\n  };\n});\n\nreturn [{\n  json: {\n    total_cases: cases.length,\n    first_pass: cases.filter(c => c.repair_attempt === 0 && c.final_overall === 'PASS').length,\n    repaired_pass: cases.filter(c => c.repair_attempt > 0 && c.final_overall === 'PASS').length,\n    final_passed: cases.filter(c => c.final_overall === 'PASS').length,\n    final_failed: cases.filter(c => c.final_overall === 'FAIL').length,\n    total_repair_attempts: cases.reduce((s, c) => s + c.repair_attempt, 0),\n    cases\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        1040
+      ],
+      "id": "e76ae345-059a-4114-9cb6-ddc97fd354fb",
+      "name": "Final QA Report"
+    },
+    {
+      "parameters": {
+        "content": "04 - Final QA Reporting\n\nConsolidates final PASS/FAIL results, repair attempts, and unresolved QA issues.",
+        "height": 496,
+        "width": 592,
+        "color": "#9F441D"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        912
+      ],
+      "id": "f08f49cd-ca7e-4cfa-9316-576aa9e28651",
+      "name": "Sticky Note3"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Set Sample Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate QA Report": {
+      "main": [
+        [
+          {
+            "node": "Needs Repair",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Test Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Test Cases": {
+      "main": [
+        [
+          {
+            "node": "Validate Rules 1-3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Rules 1-3": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Rules 4-5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Repair": {
+      "main": [
+        [
+          {
+            "node": "Prepare Repair Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Re-Evaluation（Code）": {
+      "main": [
+        [
+          {
+            "node": "Re-Evaluate Rules 1-3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Rules 4-5": {
+      "main": [
+        [
+          {
+            "node": "Generate QA Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Evaluate Rules 1-3": {
+      "main": [
+        [
+          {
+            "node": "Re-Evaluate Rules 4-5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recovery Result": {
+      "main": [
+        [
+          {
+            "node": "Retry needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry needed?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Retry Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final QA Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Repair Input": {
+      "main": [
+        [
+          {
+            "node": "AI Repair Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Evaluate Rules 4-5": {
+      "main": [
+        [
+          {
+            "node": "Recovery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Repair Chain": {
+      "main": [
+        [
+          {
+            "node": "Prepare Re-Evaluation（Code）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Retry Input": {
+      "main": [
+        [
+          {
+            "node": "AI Repair Chain - Retry 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Repair Chain - Retry 2": {
+      "main": [
+        [
+          {
+            "node": "Prepare Re-Evaluation - Retry 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Re-Evaluation - Retry 2": {
+      "main": [
+        [
+          {
+            "node": "Re-Evaluate Rules 1-3 - Retry 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Evaluate Rules 1-3 - Retry 2": {
+      "main": [
+        [
+          {
+            "node": "Re-Evaluate Rules 4-5 - Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Evaluate Rules 4-5 - Retry": {
+      "main": [
+        [
+          {
+            "node": "Recovery Result - Retry 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recovery Result - Retry 2": {
+      "main": [
+        [
+          {
+            "node": "Retry needed? - Retry 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry needed? - Retry 2": {
+      "main": [
+        [
+          {
+            "node": "Prepare Retry Input - Retry 3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final QA Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Retry Input - Retry 3": {
+      "main": [
+        [
+          {
+            "node": "AI Repair Chain - Retry 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Repair Chain - Retry 3": {
+      "main": [
+        [
+          {
+            "node": "Prepare Re-Evaluation - Retry 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Re-Evaluation - Retry 3": {
+      "main": [
+        [
+          {
+            "node": "Re-Evaluate Rules 1-3 - Retry 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Evaluate Rules 1-3 - Retry 3": {
+      "main": [
+        [
+          {
+            "node": "Re-Evaluate Rules 4-5 - Retry1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Evaluate Rules 4-5 - Retry1": {
+      "main": [
+        [
+          {
+            "node": "Recovery Result - Retry 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recovery Result - Retry 3": {
+      "main": [
+        [
+          {
+            "node": "Finalize Retry 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Retry 3": {
+      "main": [
+        [
+          {
+            "node": "Final QA Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Sample Input": {
+      "main": [
+        [
+          {
+            "node": "Load Test Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen 9B — Initial Evaluation": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Evaluate Rules 4-5",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen 9B — Copy Repair": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Repair Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen 9B — Re-Evaluation": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Re-Evaluate Rules 4-5",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen 9B — Repair Retry 2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Repair Chain - Retry 2",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen 9B — Evaluate Retry 2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Re-Evaluate Rules 4-5 - Retry",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen 9B — Repair Retry 3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Repair Chain - Retry 3",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen 9B — Evaluate Retry 3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Re-Evaluate Rules 4-5 - Retry1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "983c2c97-9a3a-4735-aa66-6d09564051b9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "74e087e3dd2ce6ed16770b8e464ffcd5b81448cabb836c546e0c23e482f58e9d"
+  },
+  "nodeGroups": [],
+  "id": "Hai9b2e6pdoHat5k",
+  "tags": []
+}
